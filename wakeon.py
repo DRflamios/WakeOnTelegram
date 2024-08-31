@@ -21,13 +21,16 @@ DEVICES = {
     'server_office': {'mac': os.getenv('SERVER_OFFICE_MAC'), 'ip': os.getenv('SERVER_OFFICE_IP')}
 }
 
+# /start command executor
 def start(update: Update, context: CallbackContext) -> None:
+    
     user_id = update.effective_user.id
     if user_id in AUTHORIZED_USERS:
         update.message.reply_text('Welcome! Use the /wake command to wake up a device.')
     else:
         update.message.reply_text("You are not authorized to use this bot.")
 
+# /wake command executor to wake devices and ping them.
 def wake(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if user_id not in AUTHORIZED_USERS:
@@ -36,13 +39,30 @@ def wake(update: Update, context: CallbackContext) -> None:
 
     # Create a list of buttons for each device
     keyboard = [
-        [InlineKeyboardButton(device_name, callback_data=device_name)]
+        [InlineKeyboardButton(device_name, callback_data=f"wake|{device_name}")]
         for device_name in DEVICES.keys()
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     update.message.reply_text('Select the device to wake up:', reply_markup=reply_markup)
+    
+# /check command executor to ping devices.
+def check(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if user_id not in AUTHORIZED_USERS:
+        update.message.reply_text("Access denied.")
+        return
+
+    # Create a list of buttons for each device
+    keyboard = [
+        [InlineKeyboardButton(device_name, callback_data=f"check|{device_name}")]
+        for device_name in DEVICES.keys()
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    update.message.reply_text('Select the device to check status:', reply_markup=reply_markup)
 
 def ping_device(ip: str) -> bool:
     """
@@ -68,24 +88,34 @@ def button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     query.answer()
 
-    device_name = query.data
+    # Split the callback data to determine the action type and device name
+    data = query.data.split('|')
+    action = data[0]
+    device_name = data[1]
 
     if device_name in DEVICES:
         mac_address = DEVICES[device_name]['mac']
         ip_address = DEVICES[device_name]['ip']
 
-        # Send the WoL packet
-        send_magic_packet(mac_address)
-        query.edit_message_text(f"WoL packet sent to {device_name} with MAC address {mac_address}. Checking status...")
+        if action == "wake":
+            # Send the WoL packet
+            send_magic_packet(mac_address)
+            query.edit_message_text(f"WoL packet sent to {device_name} with MAC address {mac_address}. Checking status...")
 
-        # Wait a few seconds to allow the device to start
-        time.sleep(5)
+            # Wait a few seconds to allow the device to start
+            time.sleep(30)
 
-        # Check if the device responds to the ping
-        if ping_device(ip_address):
-            query.edit_message_text(f"The device {device_name} is now online.")
-        else:
-            query.edit_message_text(f"Unable to wake up {device_name}. Check the device status and try again.")
+            # Check if the device responds to the ping
+            if ping_device(ip_address):
+                query.edit_message_text(f"The device {device_name} is now online.")
+            else:
+                query.edit_message_text(f"Unable to wake up {device_name}. Check the device status and try again.")
+        elif action == "check":
+            # Just check the device status without sending WoL packet
+            if ping_device(ip_address):
+                query.edit_message_text(f"The device {device_name} is currently online.")
+            else:
+                query.edit_message_text(f"The device {device_name} is currently offline.")
     else:
         query.edit_message_text("Device not recognized. Please check the device name.")
 
@@ -99,6 +129,7 @@ def main() -> None:
     # Register command handlers
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("wake", wake))
+    dispatcher.add_handler(CommandHandler("check", check))
     dispatcher.add_handler(CallbackQueryHandler(button))
 
     # Start the bot
